@@ -7,9 +7,14 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 export function openDB(): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined") return Promise.reject(new Error("Stockage local indisponible. Autorisez les données de site pour enregistrer une activité."));
   if (dbPromise) return dbPromise;
+  let request: IDBOpenDBRequest;
+  try {
+    request = indexedDB.open(DB_NAME, 1);
+  } catch (error) {
+    return Promise.reject(new Error("Stockage local bloqué sur cet appareil (navigation privée ?). Ouvrez ORYVO en navigation normale."));
+  }
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    const timer = setTimeout(() => reject(new Error("Stockage local bloqué. Fermez les anciens onglets ORYVO puis réessayez.")), 8000);
+    const timer = setTimeout(() => reject(new Error("Stockage local bloqué. Fermez les autres onglets ORYVO ou désactivez la navigation privée, puis réessayez.")), 6000);
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains("activities")) database.createObjectStore("activities", { keyPath: "id" });
@@ -21,6 +26,8 @@ export function openDB(): Promise<IDBDatabase> {
       resolve(request.result);
     };
     request.onerror = () => { clearTimeout(timer); reject(request.error ?? new Error("Stockage local inaccessible.")); };
+    // iOS Safari : une autre instance (PWA) peut bloquer l'ouverture.
+    request.onblocked = () => { clearTimeout(timer); reject(new Error("ORYVO est déjà ouvert dans un autre onglet ou une autre fenêtre. Fermez-le puis réessayez.")); };
   }).catch((error) => { dbPromise = null; throw error; });
   return dbPromise;
 }

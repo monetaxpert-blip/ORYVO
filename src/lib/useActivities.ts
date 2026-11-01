@@ -21,10 +21,25 @@ export function useActivities() {
   useEffect(() => {
     void reload();
     void syncNow().then(reload);
+    // Filet de sécurité : le squelette de chargement ne doit JAMAIS rester
+    // affiché indéfiniment. Sur iOS Safari, IndexedDB peut se suspendre sans
+    // émettre d'événement (navigation privée, quota plein, connexion fermée
+    // par le système) — on force alors un état d'erreur clair, relançable.
+    const safety = setTimeout(() => {
+      setLoading((still) => {
+        if (still) {
+          setError("Chargement local impossible (navigation privée ou stockage bloqué sur cet appareil). " +
+            "Ouvrez ORYVO en navigation normale, puis réessayez.");
+          void syncNow().then(reload);
+        }
+        return false;
+      });
+    }, 10000);
     const changed = () => void reload();
     window.addEventListener("oryvo:data", changed);
     window.addEventListener("oryvo:sync", changed);
     return () => {
+      clearTimeout(safety);
       window.removeEventListener("oryvo:data", changed);
       window.removeEventListener("oryvo:sync", changed);
     };

@@ -12,8 +12,16 @@ export function deviceToken(): string {
   return value;
 }
 
+function withTimeout(signal: AbortSignal | null): AbortSignal | undefined {
+  if (signal) return signal;
+  // AbortController manuel : AbortSignal.timeout est absent sur les iOS < 17.4.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("Délai dépassé", "TimeoutError")), 15000);
+  controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  return controller.signal;
+}
 export function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${deviceToken()}`);
-  return fetch(path, { ...init, headers, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(15000) });
+  return fetch(path, { ...init, headers, cache: "no-store", signal: withTimeout(init.signal ?? null) });
 }
