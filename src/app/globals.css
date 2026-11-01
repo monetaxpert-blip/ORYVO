@@ -1,0 +1,239 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #080808;
+  --color-coal: #0d0d0d;
+  --color-smoke: #141414;
+  --color-edge: #1f1f1f;
+  --color-line: rgba(255, 255, 255, 0.07);
+  --color-flame: #ff5a00;
+  --color-flare: #ff8a00;
+  --color-amber-soft: #ffb25e;
+
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-archivo), "Arial Black", sans-serif;
+
+  --shadow-glow: 0 0 24px rgba(255, 90, 0, 0.45), 0 0 64px rgba(255, 90, 0, 0.18);
+  --shadow-card: 0 18px 50px rgba(0, 0, 0, 0.55);
+  --animate-pulse-ring: pulse-ring 1.8s ease-out infinite;
+  --animate-fade-up: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-splash-out: splash-out 0.5s ease forwards;
+  --animate-breathe: breathe 3.2s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.9;
+  }
+  80% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes splash-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes ticker {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+html {
+  background: #080808;
+  color-scheme: dark;
+}
+
+body {
+  background: #080808;
+  color: #ffffff;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Subtle brand atmosphere: faint orange corners + deep vignette */
+.oryvo-ambience {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 60% at 50% 115%, rgba(255, 90, 0, 0.14) 0%, transparent 55%),
+    radial-gradient(90% 45% at 85% -8%, rgba(255, 90, 0, 0.1) 0%, transparent 60%),
+    #080808;
+}
+
+::selection {
+  background: rgba(255, 90, 0, 0.85);
+  color: #fff;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.text-gradient-flame {
+  background: linear-gradient(100deg, #ff8a00 0%, #ff5a00 60%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.glass {
+  background: rgba(13, 13, 13, 0.72);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.card {
+  background: linear-gradient(160deg, #101010 0%, #0b0b0b 100%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.shimmer {
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.04) 60%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+.pb-nav {
+  padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+}
+
+.safe-b {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-t {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Leaflet dark harmonization */
+.leaflet-container {
+  background: #070707 !important;
+  font-family: inherit !important;
+  outline: none;
+}
+.leaflet-control-attribution {
+  background: rgba(8, 8, 8, 0.55) !important;
+  color: rgba(255, 255, 255, 0.35) !important;
+  font-size: 8px !important;
+  padding: 1px 4px;
+}
+.leaflet-control-attribution a {
+  color: rgba(255, 138, 0, 0.6) !important;
+}
+.leaflet-bar {
+  border: none !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+.leaflet-bar a {
+  background: #141414 !important;
+  color: #fff !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.oryvo-live-dot {
+  position: relative;
+}
+.oryvo-live-dot::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border-radius: 9999px;
+  border: 2px solid rgba(255, 90, 0, 0.55);
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+.leaflet-fade-anim .leaflet-popup {
+  transition: none;
+}
+
+/* Leaflet's internal z-indices must never cover application controls. */
+.oryvo-map .leaflet-container {
+  isolation: isolate;
+  z-index: 0;
+  height: 100%;
+  width: 100%;
+  background-color: #101111 !important;
+  background-image: linear-gradient(#ffffff05 1px, transparent 1px), linear-gradient(90deg, #ffffff05 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+/* Darken only base tiles: markers and the orange route keep their true colors. */
+.oryvo-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) saturate(0.24) brightness(0.78) contrast(1.08);
+}
+.map-control {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #ffffff24;
+  border-radius: 12px;
+  background: #080808e8;
+  color: white;
+  cursor: pointer;
+}
+.map-control:hover { color: #ff8a00; border-color: #ff5a0066; }
+button:not(:disabled), a { -webkit-tap-highlight-color: transparent; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 2px solid #ff8a00; outline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+

@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Environment — NEVER commit secrets (DATABASE_URL, API keys)
+.env
+.env.*
+!.env.example
+
+# Testing / local artifacts
+coverage/
+.artifacts/
+*.log
+.DS_Store
