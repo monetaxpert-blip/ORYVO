@@ -6,6 +6,7 @@ import { commitActivity, idbGetActivity, kvGet, kvSet, type SessionSnapshot } fr
 import { defaultActivityName } from "./format";
 import { SPORT_LABEL, type ActivityRecord, type SportType, type TrackPoint } from "./types";
 import { SIGNAL_TIMEOUT_MS, TrackerEngine, type TrackerStatus } from "./tracker-engine";
+import { startKeepAlive, stopKeepAlive } from "./keepalive";
 export type { TrackerStatus } from "./tracker-engine";
 export type GpsQuality = "search" | "excellent" | "good" | "weak" | "lost";
 export interface LiveStats { distanceM: number; elapsedSec: number; speed: number; avgSpeed: number; paceSecKm: number; calories: number }
@@ -59,7 +60,11 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
     const snapshot = e.snapshot(Date.now());
     const work = pending.current.catch(() => undefined).then(() => kvSet(SESSION_KEY, snapshot));
     pending.current = work;
-    void work.catch(() => { if (mounted.current) setStorageError("Sauvegarde locale impossible. Libérez de l'espace sans fermer cette séance, puis réessayez."); });
+    void work.catch(() => {
+      if (!mounted.current) return;
+      // Le premier message prime : pas d'affichage instable sur iOS.
+      setStorageError((prev) => prev ?? "Sauvegarde locale impossible. Libérez de l'espace sans fermer cette séance, puis réessayez.");
+    });
     return work;
   }, []);
 
@@ -77,6 +82,7 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
     } catch { /* Unsupported or refused: the UI explains the foreground requirement. */ }
   }, []);
 
+  const storageSafetyFired = useRef(false);
   useEffect(() => {
     mounted.current = true;
     let cancelled = false;
@@ -106,16 +112,37 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
           }
         }
         setStorageReady(true);
+        // Le stockage a répondu : on lève l'avertissement du filet de sécurité s'il était parti.
+        if (storageSafetyFired.current) {
+          storageSafetyFired.current = false;
+          setStorageError((prev) => (prev && prev.startsWith("Stockage local non confirmé") ? null : prev));
+        }
       } catch {
         if (!cancelled) setStorageError("Stockage local inaccessible. Autorisez les données de site pour enregistrer sans risque de perte.");
       }
     };
     void initialize();
+    // Filets de sécurité iOS : navigator.locks ou IndexedDB peuvent se figer
+    // SANS émettre aucun événement (navigation privée, gel du système).
+    // Plutôt que de rester figé sur « Vérification du stockage… », on continue :
+    // l'enregistrement reste possible, avec un avertissement clair.
+    const lockSafety = setTimeout(() => {
+      if (!cancelled && !ownsSession.current) { ownsSession.current = true; setLockReady(true); }
+    }, 4000);
+    const storageSafety = setTimeout(() => {
+      if (cancelled) return;
+      storageSafetyFired.current = true;
+      setStorageReady(true);
+      setStorageError((prev) => prev ?? "Stockage local non confirmé : si l'app se ferme, la séance peut ne pas être récupérable. L'enregistrement reste possible.");
+    }, 8000);
     return () => {
+      clearTimeout(lockSafety);
+      clearTimeout(storageSafety);
       cancelled = true;
       mounted.current = false;
       void persist().catch(() => undefined);
       releaseWakeLock();
+      stopKeepAlive();
       ownsSession.current = false;
       unlock?.();
     };
@@ -194,6 +221,8 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
   const canStart = storageReady && lockReady && !busyElsewhere && !permissionError && !!engine.current.lastFix && Date.now() - engine.current.lastFix.t < SIGNAL_TIMEOUT_MS;
   const start = useCallback(() => {
     if (!storageReady || !lockReady || permissionError || !engine.current.lastFix || Date.now() - engine.current.lastFix.t >= SIGNAL_TIMEOUT_MS) return;
+    // DOIT se faire dans le geste utilisateur (clic) pour iOS.
+    startKeepAlive();
     engine.current.start(crypto.randomUUID(), Date.now());
     lastRenderedLength.current = -1;
     setRestored(false);
@@ -209,6 +238,7 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
   }, [persist, publish]);
   const resume = useCallback(() => {
     if (permissionError || busyElsewhere) return;
+    startKeepAlive();
     engine.current.resume(Date.now()); publish();
     void requestWakeLock();
     void persist().catch(() => undefined);
@@ -227,6 +257,7 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       e.finish(Date.now());
       setStorageError(null);
       releaseWakeLock();
+      stopKeepAlive();
       publish();
       return record;
     };
@@ -250,7 +281,9 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
     lastRenderedLength.current = -1;
     setRestored(false);
     setStorageError(null);
-    releaseWakeLock(); publish();
+    releaseWakeLock();
+    stopKeepAlive();
+    publish();
   }, [publish, releaseWakeLock]);
   const setSport = useCallback((value: SportType) => {
     if (!["idle", "ready"].includes(engine.current.status)) return;

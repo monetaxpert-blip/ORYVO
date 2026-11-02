@@ -3,7 +3,7 @@
 import { Check, ChevronLeft, ExternalLink, Flag, Pause, Play, RefreshCw, RotateCcw, Share2, ShieldCheck, SignalHigh, Trash2, TriangleAlert } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "@/components/AppLink";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SPORT_ICON, Sheet, Stat } from "@/components/bits";
 import { fmtClock, fmtKm, fmtPace, fmtSpeed } from "@/lib/format";
 import { idbMutateActivity } from "@/lib/idb";
@@ -14,7 +14,14 @@ import { SPORT_LABEL, type ActivityRecord, type SportType } from "@/lib/types";
 import { useTracker, type GpsQuality } from "@/lib/useTracker";
 import { useSyncState } from "@/lib/useSyncState";
 
-const RouteMap = dynamic(() => import("@/components/RouteMap"), { ssr: false, loading: () => <div className="grid h-full place-items-center bg-coal text-xs text-white/40">Préparation de la carte…</div> });
+function MapLoading() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSlow(true), 12000); return () => clearTimeout(t); }, []);
+  return <div className="grid h-full place-items-center px-8 text-center text-xs leading-relaxed text-white/40">
+    {slow ? <>Carte indisponible pour l'instant{navigator.onLine ? "" : " (hors ligne)"}.<br />Le suivi GPS fonctionne normalement sans la carte.</> : "Préparation de la carte…"}
+  </div>;
+}
+const RouteMap = dynamic(() => import("@/components/RouteMap"), { ssr: false, loading: () => <MapLoading /> });
 const SPORTS: SportType[] = ["run", "walk", "ride", "hike"];
 const QUALITY_UI: Record<GpsQuality, { label: string; color: string }> = {
   search: { label: "Recherche GPS", color: "text-amber-300" },
@@ -103,7 +110,7 @@ export default function RecordPage() {
             })}</div>
             <button type="button" onClick={t.start} disabled={!t.canStart} className="flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-flare to-flame py-4 font-display text-base font-black uppercase tracking-[0.16em] shadow-glow transition active:scale-[0.98] disabled:opacity-40"><Play size={20} fill="currentColor" />{t.canStart ? "Démarrer" : !t.storageReady ? "Vérification du stockage…" : "En attente du GPS…"}</button>
             {!t.canStart && !t.permissionError && t.storageReady && <button type="button" onClick={t.retryGps} className="mx-auto mt-3 flex items-center gap-1.5 text-xs text-white/60"><RefreshCw size={12} />Relancer la recherche GPS</button>}
-            <p className="mt-3 text-center text-[10px] leading-relaxed text-white/45">Gardez ORYVO ouverte et l’écran allumé pendant la sortie.<br />Le GPS et la sauvegarde locale fonctionnent sans Internet.</p>
+            <p className="mt-3 text-center text-[10px] leading-relaxed text-white/45">Vous pouvez verrouiller l’écran pendant la sortie : le suivi GPS continue en arrière-plan.<br />Le GPS et la sauvegarde locale fonctionnent sans Internet.</p>
           </>}
 
           {(tracking || paused) && <>

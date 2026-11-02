@@ -73,3 +73,31 @@ test('small and landscape screens keep controls accessible; confirmation focus i
   await expect(page.getByRole('heading', { name: 'Activité enregistrée' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('record: storage and locks frozen (iOS) never block Démarrer; keepalive audio starts', async ({ page }) => {
+  await page.addInitScript(() => {
+    // IndexedDB qui ne rappelle JAMAIS success/error (hang iOS simulé)
+    Object.defineProperty(indexedDB, 'open', { value: () => ({ result: null, onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null }), configurable: true });
+    // navigator.locks qui ne rappelle jamais le callback
+    Object.defineProperty(navigator, 'locks', { value: { request: () => new Promise(() => {}) }, configurable: true });
+    // capter les starts d'AudioContext (keepalive)
+    window.__audioStarts = 0;
+    const AC = window.AudioContext;
+    window.AudioContext = class extends AC { constructor(...args) { super(...args); window.__audioStarts++; } };
+  });
+  await page.goto('/record');
+  // le bouton ne doit plus être figé sur « Vérification du stockage… »
+  await expect(page.getByRole('button', { name: /Vérification du stockage/ })).toHaveCount(0, { timeout: 15000 });
+  await expect(page.getByText(/Stockage local (non confirmé|inaccessible)/)).toBeVisible({ timeout: 15000 });
+  // avec le fix GPS simulé, Démarrer devient actif malgré le stockage gelé
+  await expect(page.getByRole('button', { name: 'Démarrer', exact: true })).toBeEnabled({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Démarrer', exact: true }).click();
+  expect(await page.evaluate(() => window.__audioStarts)).toBe(1); // keepalive démarré dans le geste
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await page.getByRole('button', { name: 'Terminer', exact: true }).click();
+  // sauvegarde impossible (IDB gelé) : la séance doit rester en pause avec un message, pas crash
+  await expect(page.getByText(/Sauvegarde impossible/)).toBeVisible({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Reprendre', exact: true }).click();
+  expect(await page.evaluate(() => window.__audioStarts)).toBe(1); // pas de double AudioContext
+});
