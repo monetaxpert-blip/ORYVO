@@ -1,5 +1,5 @@
-/* ORYVO B v2: cache application files only, NEVER map tiles or private APIs. */
-const VERSION = "oryvo-v2-repair-1";
+/* ORYVO v3: cache application files only, NEVER map tiles or private APIs. */
+const VERSION = "oryvo-v3-ios-fix";
 const STATIC = `${VERSION}-static`;
 const RUNTIME = `${VERSION}-runtime`;
 const PAGES = ["/", "/record", "/activities", "/activity", "/profile"];
