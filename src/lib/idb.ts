@@ -14,7 +14,10 @@ export function openDB(): Promise<IDBDatabase> {
     return Promise.reject(new Error("Stockage local bloqué sur cet appareil (navigation privée ?). Ouvrez ORYVO en navigation normale."));
   }
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Stockage local bloqué. Fermez les autres onglets ORYVO ou désactivez la navigation privée, puis réessayez.")), 6000);
+    // 15 s : la première ouverture à froid sur iOS/mobiliers peut être lente,
+    // mais un vrai blocage (navigation privée, quota) doit aussi aboutir à
+    // un message, jamais à un écran figé.
+    const timer = setTimeout(() => reject(new Error("Stockage local bloqué. Fermez les autres onglets ORYVO ou désactivez la navigation privée, puis réessayez.")), 15000);
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains("activities")) database.createObjectStore("activities", { keyPath: "id" });
@@ -120,4 +123,46 @@ export async function commitActivity(activity: StoredActivity): Promise<void> {
 
 export function emitDataChanged(): void {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("oryvo:data"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Repli localStorage : garantit la récupération de séance même si     */
+/* IndexedDB est bloqué (navigation privée iOS, quota, gel système).   */
+/* ------------------------------------------------------------------ */
+const MIRROR_KEY = "oryvo:session-mirror";
+const PENDING_KEY = "oryvo:pending-activities";
+
+export function mirrorSession(snap: unknown): void {
+  try {
+    const text = JSON.stringify(snap);
+    if (text && text.length < 2_500_000) localStorage.setItem(MIRROR_KEY, text);
+  } catch { /* quota : le miroir est un effort de bonne foi */ }
+}
+export function readSessionMirror<T>(): T | null {
+  try {
+    const raw = localStorage.getItem(MIRROR_KEY);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch { return null; }
+}
+export function clearSessionMirror(): void {
+  try { localStorage.removeItem(MIRROR_KEY); } catch { /* noop */ }
+}
+
+export function pendingAppendActivity(activity: StoredActivity): void {
+  try {
+    const list = readPendingActivities();
+    localStorage.setItem(PENDING_KEY, JSON.stringify([{ ...activity, synced: false }, ...list.filter((x) => x.id !== activity.id)].slice(0, 10)));
+    emitDataChanged();
+  } catch { /* quota */ }
+}
+export function readPendingActivities(): StoredActivity[] {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    const list = raw ? (JSON.parse(raw) as StoredActivity[]) : [];
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+export function clearPendingActivities(): void {
+  try { localStorage.removeItem(PENDING_KEY); } catch { /* noop */ }
+  emitDataChanged();
 }

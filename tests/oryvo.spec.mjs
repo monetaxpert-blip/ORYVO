@@ -219,7 +219,8 @@ test('blocked browser storage shows a useful error instead of a spinner or false
   await page.addInitScript(() => Object.defineProperty(window, 'indexedDB', { configurable: true, value: { open() { throw new DOMException('Storage blocked', 'SecurityError'); } } }));
   await page.goto('/record');
   await expect(page.getByText(/Stockage local inaccessible/)).toBeVisible();
-  await expect(page.getByRole('button', { name: /Vérification du stockage/ })).toBeDisabled();
+  // Le stockage bloqué ne doit plus empêcher le départ : GPS OK = bouton actif.
+  await expect(page.getByRole('button', { name: 'Démarrer', exact: true })).toBeEnabled({ timeout: 20000 });
   await page.getByRole('link', { name: "Retour à l'accueil" }).click();
   await expect(page.getByText(/Stockage local indisponible/)).toBeVisible();
   await noErrors(page);

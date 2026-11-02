@@ -87,17 +87,21 @@ test('record: storage and locks frozen (iOS) never block Démarrer; keepalive au
   });
   await page.goto('/record');
   // le bouton ne doit plus être figé sur « Vérification du stockage… »
-  await expect(page.getByRole('button', { name: /Vérification du stockage/ })).toHaveCount(0, { timeout: 15000 });
-  await expect(page.getByText(/Stockage local (non confirmé|inaccessible)/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('button', { name: /Vérification du stockage/ })).toHaveCount(0, { timeout: 20000 });
+  // un message de stockage clair s'affiche (filet de sécurité ou échec explicite)
+  await expect(page.getByText(/Stockage (principal non confirmé|local inaccessible)/)).toBeVisible({ timeout: 20000 });
   // avec le fix GPS simulé, Démarrer devient actif malgré le stockage gelé
-  await expect(page.getByRole('button', { name: 'Démarrer', exact: true })).toBeEnabled({ timeout: 15000 });
+  await expect(page.getByRole('button', { name: 'Démarrer', exact: true })).toBeEnabled({ timeout: 20000 });
   await page.getByRole('button', { name: 'Démarrer', exact: true }).click();
   expect(await page.evaluate(() => window.__audioStarts)).toBe(1); // keepalive démarré dans le geste
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await page.getByRole('button', { name: 'Terminer', exact: true }).click();
-  // sauvegarde impossible (IDB gelé) : la séance doit rester en pause avec un message, pas crash
-  await expect(page.getByText(/Sauvegarde impossible/)).toBeVisible({ timeout: 30000 });
-  await page.getByRole('button', { name: 'Reprendre', exact: true }).click();
+  // Repli garanti : l'activité est conservée dans la file de secours (localStorage)
+  await expect(page.getByRole('heading', { name: 'Activité enregistrée' })).toBeVisible({ timeout: 45000 });
+  await expect(page.getByText(/conservée dans la sauvegarde de secours/)).toBeVisible({ timeout: 45000 });
+  const pending = await page.evaluate(() => JSON.parse(localStorage.getItem('oryvo:pending-activities') ?? '[]'));
+  expect(pending.length).toBe(1);
+  expect(pending[0].distanceM).toBeGreaterThanOrEqual(0);
   expect(await page.evaluate(() => window.__audioStarts)).toBe(1); // pas de double AudioContext
 });

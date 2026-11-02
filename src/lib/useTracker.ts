@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { caloriesFor } from "./geo";
-import { commitActivity, idbGetActivity, kvGet, kvSet, type SessionSnapshot } from "./idb";
+import { clearPendingActivities, clearSessionMirror, commitActivity, idbGetActivity, idbPutActivity, kvGet, kvSet, mirrorSession, pendingAppendActivity, readPendingActivities, readSessionMirror, type SessionSnapshot } from "./idb";
 import { defaultActivityName } from "./format";
 import { SPORT_LABEL, type ActivityRecord, type SportType, type TrackPoint } from "./types";
 import { SIGNAL_TIMEOUT_MS, TrackerEngine, type TrackerStatus } from "./tracker-engine";
@@ -54,19 +54,28 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       calories: caloriesFor(e.sport, options.current.weightKg, e.distanceM, elapsed, avgSpeed) });
   }, []);
 
+  // Priorité des messages : le plus significatif l'emporte, sans affichage instable.
+  const msgRank = useRef(0);
+  const raiseStorageError = useCallback((msg: string, rank: number) => {
+    if (rank < msgRank.current) return;
+    msgRank.current = rank;
+    setStorageError(msg);
+  }, []);
   const persist = useCallback(() => {
     const e = engine.current;
     if (!ownsSession.current || !["tracking", "paused", "autopaused"].includes(e.status)) return pending.current;
     const snapshot = e.snapshot(Date.now());
+    // Miroir synchrone et immédiat : même si IndexedDB est bloqué (navigation
+    // privée, gel iOS), la séance survit à la fermeture/actualisation.
+    mirrorSession(snapshot);
     const work = pending.current.catch(() => undefined).then(() => kvSet(SESSION_KEY, snapshot));
     pending.current = work;
     void work.catch(() => {
       if (!mounted.current) return;
-      // Le premier message prime : pas d'affichage instable sur iOS.
-      setStorageError((prev) => prev ?? "Sauvegarde locale impossible. Libérez de l'espace sans fermer cette séance, puis réessayez.");
+      raiseStorageError("Sauvegarde principale indisponible : la sauvegarde de secours conserve la séance.", 1);
     });
     return work;
-  }, []);
+  }, [raiseStorageError]);
 
   const releaseWakeLock = useCallback(() => {
     const lock = wakeLock.current;
@@ -98,9 +107,19 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
         }).catch(() => { if (!cancelled) setBusyElsewhere(true); });
       } else { ownsSession.current = true; setLockReady(true); }
       try {
-        await kvSet("oryvo:storage-check", Date.now());
-        const snapshot = await kvGet<SessionSnapshot>(SESSION_KEY);
+        // Trois tentatives : la première ouverture à froid sur mobile peut
+        // être lente, et un échec transitoire ne doit jamais bloquer l'app.
+        let stored = false;
+        for (let attempt = 0; attempt < 3 && !stored; attempt++) {
+          if (attempt > 0) await new Promise((r) => setTimeout(r, 800));
+          if (cancelled) return;
+          try { await kvSet("oryvo:storage-check", Date.now()); stored = true; } catch { /* tentative suivante */ }
+        }
+        if (!stored) throw new Error("stockage indisponible");
+        let snapshot = await kvGet<SessionSnapshot>(SESSION_KEY);
         if (cancelled) return;
+        // Repli : si IndexedDB n'a pas la séance, le miroir localStorage la garde.
+        if (!snapshot) snapshot = readSessionMirror<SessionSnapshot>();
         if (snapshot?.startTs && ["tracking", "paused", "autopaused", "finished"].includes(snapshot.status)) {
           const committed = snapshot.id ? await idbGetActivity(snapshot.id) : null;
           if (cancelled) return;
@@ -111,14 +130,26 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
             publish();
           }
         }
+        // Réintégrer les activités gardées en file de secours dans IndexedDB.
+        const pendingList = readPendingActivities();
+        if (pendingList.length) {
+          let all = true;
+          for (const item of pendingList) {
+            try { await idbPutActivity(item); } catch { all = false; break; }
+          }
+          if (all) clearPendingActivities();
+        }
         setStorageReady(true);
         // Le stockage a répondu : on lève l'avertissement du filet de sécurité s'il était parti.
         if (storageSafetyFired.current) {
           storageSafetyFired.current = false;
-          setStorageError((prev) => (prev && prev.startsWith("Stockage local non confirmé") ? null : prev));
+          if (msgRank.current <= 1) {
+            msgRank.current = 0;
+            setStorageError(null);
+          }
         }
       } catch {
-        if (!cancelled) setStorageError("Stockage local inaccessible. Autorisez les données de site pour enregistrer sans risque de perte.");
+        if (!cancelled) raiseStorageError("Stockage local inaccessible : la séance reste protégée en mémoire et en sauvegarde de secours. Autorisez les données de site pour un stockage complet.", 2);
       }
     };
     void initialize();
@@ -133,8 +164,8 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       if (cancelled) return;
       storageSafetyFired.current = true;
       setStorageReady(true);
-      setStorageError((prev) => prev ?? "Stockage local non confirmé : si l'app se ferme, la séance peut ne pas être récupérable. L'enregistrement reste possible.");
-    }, 8000);
+      raiseStorageError("Stockage principal non confirmé pour l'instant : la séance est protégée par la sauvegarde de secours, l'enregistrement reste possible.", 1);
+    }, 14000);
     return () => {
       clearTimeout(lockSafety);
       clearTimeout(storageSafety);
@@ -148,8 +179,10 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
     };
   }, [persist, publish, releaseWakeLock]);
 
+  // Le GPS démarre DÈS QUE POSSIBLE, indépendamment de l'état du stockage :
+  // une lenteur d'IndexedDB ne doit jamais retarder la recherche de position.
   useEffect(() => {
-    if (!storageReady || !lockReady || busyElsewhere) return;
+    if (!lockReady || busyElsewhere) return;
     if (!window.isSecureContext || !navigator.geolocation) {
       setPermissionError(true);
       setLocationMessage("Le GPS nécessite un navigateur compatible et une adresse HTTPS.");
@@ -163,7 +196,9 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
         spd: c.speed != null && Number.isFinite(c.speed) && c.speed >= 0 && c.speed <= 200 ? c.speed : null,
         seg: engine.current.segment,
       };
-      if (c.accuracy > 40) { setQuality("weak"); return; }
+      // Jusqu'à 60 m d'incertitude restent exploitables (courant en ville) ;
+      // le filtre de vitesse du moteur écarte ensuite les sauts de précision.
+      if (c.accuracy > 60) { setQuality("weak"); return; }
       const before = engine.current.status;
       if (!engine.current.ingest(point, Date.now(), options.current.autoPauseEnabled)) return;
       setPermissionError(false);
@@ -185,9 +220,9 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       } else {
         setLocationMessage(error.code === 3 ? "Le GPS met du temps à répondre. Placez-vous à l'extérieur ; la recherche continue." : "Position indisponible. Vérifiez que la localisation de votre appareil est activée.");
       }
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    }, { enableHighAccuracy: true, maximumAge: 500, timeout: 15000 });
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [storageReady, lockReady, busyElsewhere, gpsAttempt, persist, publish, requestWakeLock]);
+  }, [lockReady, busyElsewhere, gpsAttempt, persist, publish, requestWakeLock]);
 
   useEffect(() => {
     const tick = setInterval(() => {
@@ -198,7 +233,8 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       if (before !== e.status) void persist().catch(() => undefined);
       publish();
     }, 500);
-    const save = setInterval(() => { if (storageReady && lockReady) void persist().catch(() => undefined); }, 2000);
+    // Le miroir de secours est écrit même si le stockage principal est bloqué.
+    const save = setInterval(() => { if (lockReady) void persist().catch(() => undefined); }, 2000);
     const visibility = () => {
       void persist().catch(() => undefined);
       if (document.visibilityState === "visible" && engine.current.status === "tracking") void requestWakeLock();
@@ -216,11 +252,12 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       window.removeEventListener("pagehide", visibility);
       window.removeEventListener("beforeunload", beforeUnload);
     };
-  }, [persist, publish, requestWakeLock, storageReady, lockReady]);
+  }, [persist, publish, requestWakeLock, lockReady]);
 
-  const canStart = storageReady && lockReady && !busyElsewhere && !permissionError && !!engine.current.lastFix && Date.now() - engine.current.lastFix.t < SIGNAL_TIMEOUT_MS;
+  // Le stockage ne bloque plus le départ : la sauvegarde de secours couvre la séance.
+  const canStart = lockReady && !busyElsewhere && !permissionError && !!engine.current.lastFix && Date.now() - engine.current.lastFix.t < SIGNAL_TIMEOUT_MS;
   const start = useCallback(() => {
-    if (!storageReady || !lockReady || permissionError || !engine.current.lastFix || Date.now() - engine.current.lastFix.t >= SIGNAL_TIMEOUT_MS) return;
+    if (!lockReady || permissionError || !engine.current.lastFix || Date.now() - engine.current.lastFix.t >= SIGNAL_TIMEOUT_MS) return;
     // DOIT se faire dans le geste utilisateur (clic) pour iOS.
     startKeepAlive();
     engine.current.start(crypto.randomUUID(), Date.now());
@@ -253,16 +290,26 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
       publish();
       const record = e.record(defaultActivityName(SPORT_LABEL[e.sport], e.startTs), Date.now(), options.current.weightKg);
       await pending.current.catch(() => undefined);
-      await commitActivity({ ...record, synced: false, revision: 1 });
+      try {
+        await commitActivity({ ...record, synced: false, revision: 1 });
+        clearSessionMirror();
+        msgRank.current = 0;
+        setStorageError(null);
+      } catch {
+        // Repli garanti : l'activité est conservée dans la file de secours
+        // (localStorage) et migrée vers IndexedDB dès que le stockage répond.
+        pendingAppendActivity({ ...record, synced: false, revision: 1 });
+        clearSessionMirror();
+        raiseStorageError("Activité conservée dans la sauvegarde de secours : le stockage principal n'a pas répondu. Elle sera réintégrée automatiquement.", 3);
+      }
       e.finish(Date.now());
-      setStorageError(null);
       releaseWakeLock();
       stopKeepAlive();
       publish();
       return record;
     };
     const work = operation().catch((error) => {
-      setStorageError("Sauvegarde impossible. La séance reste en pause : libérez de l'espace puis réessayez.");
+      raiseStorageError("Erreur inattendue pendant la sauvegarde. La séance reste en pause : réessayez.", 3);
       throw error;
     }).finally(() => { finishing.current = null; });
     finishing.current = work;
@@ -280,6 +327,7 @@ export function useTracker(weightKg: number, autoPauseEnabled: boolean) {
     engine.current = fresh;
     lastRenderedLength.current = -1;
     setRestored(false);
+    msgRank.current = 0;
     setStorageError(null);
     releaseWakeLock();
     stopKeepAlive();

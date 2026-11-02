@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { idbGetActivity, idbGetAllActivities, idbPutActivity, type StoredActivity } from "./idb";
+import { idbGetActivity, idbGetAllActivities, idbPutActivity, readPendingActivities, type StoredActivity } from "./idb";
 import { apiFetch, deviceToken } from "./client-api";
 import { syncNow } from "./sync";
+
+/** IndexedDB + file de secours : une activité sauvegardée est TOUJOURS listée. */
+function mergeWithPending(all: StoredActivity[]): StoredActivity[] {
+  const map = new Map(all.map((a) => [a.id, a]));
+  for (const p of readPendingActivities()) if (!map.has(p.id)) map.set(p.id, p);
+  return [...map.values()];
+}
 
 export function useActivities() {
   const [items, setItems] = useState<StoredActivity[]>([]);
@@ -11,10 +18,14 @@ export function useActivities() {
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     try {
-      const all = await idbGetAllActivities();
+      const all = mergeWithPending(await idbGetAllActivities());
       setItems(all.filter((a) => !a.deleted).sort((a, b) => b.startedAt - a.startedAt));
       setError(null);
     } catch {
+      // Même si IndexedDB est bloqué, les activités de la file de secours s'affichent.
+      try {
+        setItems(readPendingActivities().filter((a) => !a.deleted).sort((a, b) => b.startedAt - a.startedAt));
+      } catch { /* liste vide */ }
       setError("Stockage local indisponible. Autorisez les données de site puis réessayez.");
     } finally { setLoading(false); }
   }, []);
@@ -48,10 +59,13 @@ export function useActivities() {
 }
 
 export async function getActivityHydrated(id: string): Promise<StoredActivity | null> {
-  const local = await idbGetActivity(id);
+  const local = await idbGetActivity(id).catch(() => null);
   if (local?.deleted) return null;
   // Even a zero-distance activity is a real saved session, not a cache miss.
   if (local) return local;
+  // File de secours (localStorage) : la séance est lisible même sans IndexedDB.
+  const mirrored = readPendingActivities().find((a) => a.id === id);
+  if (mirrored) return mirrored;
   if (!navigator.onLine) return null;
   try {
     const response = await apiFetch(`/api/activities/${encodeURIComponent(id)}`);

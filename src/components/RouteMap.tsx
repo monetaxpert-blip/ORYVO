@@ -31,7 +31,8 @@ function dot(color: string, pulse = false) {
 
 export default function RouteMap({
   points, live, follow = false, interactive = true, fitKey,
-  className = "", initialCenter = [46.6, 1.9], initialZoom = 5,
+  // Base : Dakar (Sénégal). Dès le premier fix GPS, la carte se recentre sur la position réelle.
+  className = "", initialCenter = [14.7167, -17.4677], initialZoom = 11,
 }: RouteMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
